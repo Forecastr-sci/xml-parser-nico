@@ -8,113 +8,176 @@ for (pack in packages) {
 library(xml2)
 library(optparse)
 
-PREFIX <- "df"
+SUFFIX <- "df"
 EXTENSION <- ".RData"
 SLEEP_TIME <- 5
 
+
+take_input <- function(prompt) {
+  if (interactive()) {
+    input <- readline(prompt)
+  }
+  else {
+    cat(prompt)
+    input <- readLines("stdin", n = 1)
+  }
+  input <- gsub("^[\'\" ]+|[\'\" \n]+$", "", input)
+  return(input)
+}
+
 main <- function() {
-  option_list <- list(
-    make_option(
-      c("-i", "--input"),
-      type = "character",
-      help = "Append results to existing .RData file",
-      default = NULL
-    ),
-    make_option(
-      c("-o", "--output"),
-      type = "character",
-      help = "Output RData file",
-      default = NULL
-    )
-  )
-  parser <-
-    OptionParser(usage = "%prog <PATH TO XML|TXT> [OPTIONS]", option_list = option_list)
+  # Sessions will only differ by the mean of taking input and necessity to parse command-line args
   
-  args <- parse_args(parser, positional_arguments = 1)
-  
-  paths <- prepare_paths_for_parsing(args$args[[1]])
-  
-  df <- generate_df(paths)
-  
-  input_file <- args$options$input
-  output_file <- args$options$output
-  
-  # Parse other CLI arguments
-  if (!is.null(input_file) &&
-      file.exists(input_file) &&
-      tools::file_ext(input_file) == "RData") {
-    df_new <- df
-    load(input_file)
-    df <- rbind(df, df_new)
-  }
-  fname <- ""
-  if (!is.null(output_file)) {
-    if (!file.exists(output_file)) {
-      fname <- output_file
-    } else {
-      print("Careful, this file exists and will be replaced")
-      print(
-        sprintf(
-          "Press Ctrl-C in %i seconds to abort the program if you want to prevent this",
-          SLEEP_TIME
-        )
+  if (!(interactive())) {
+    # Parse command-line arguments
+    option_list <- list(
+      make_option(
+        c("-i", "--input"),
+        type = "character",
+        help = "Append results to existing .RData file",
+        default = NULL
+      ),
+      make_option(
+        c("-o", "--output"),
+        type = "character",
+        help = "Output RData file",
+        default = NULL
       )
-      Sys.sleep(SLEEP_TIME)
-      fname <- output_file
+    )
+    parser <-
+      OptionParser(usage = "%prog <PATH TO XML|TXT> [OPTIONS]", option_list = option_list)
+    
+    args <- parse_args(parser, positional_arguments = 1)
+    
+    input_file <- args$options$input
+    output_file <- args$options$output
+    
+    paths <- prepare_paths_for_parsing(args$args[[1]])
+    df <- generate_df(paths)
+    
+    # Append data frame to dataframe from input file
+    if (!is.null(input_file) &&
+        file.exists(input_file) &&
+        tools::file_ext(input_file) == "RData") {
+      df_new <- df
+      load(input_file)
+      df <- rbind(df, df_new)
     }
+    
+    # Generate default name for .RData file (timestamp+suffix+extension)
+    if (is.null(output_file)) {
+      output_file <- generate_filename(SUFFIX, EXTENSION)
+    }
+    else {
+      # Check for attempt to overwrite existing .RData file
+      if (file.exists(output_file)) {
+        overwrite_query <- get_yn("Careful, this file exists and will be replaced. Proceed?\n(y)es/(n)o: ")
+        if (!overwrite_query) {
+          output_file <- generate_filename(SUFFIX, EXTENSION)
+        }
+      }
+    }
+    save(df, file = output_file)
+    rm(list = ls(all.names = TRUE))
   }
-  
-  
-  if (fname == "") {
-    fname <-
-      sprintf("%s%s%s",
-              format(Sys.time(), "%Y-%m-%d_%H%M%S"),
-              PREFIX,
-              EXTENSION)
+  else {
+    # Get necessary values from the console when in interactive session
+    path <- take_input("select path: ")
+    
+    valid_paths <- prepare_paths_for_parsing(path, "xml")
+    
+    df <- generate_df(valid_paths)
+    
+    input_file <- take_input("Write a name of .RData file to append dataframe to (skip to create new): ")
+    
+    if (input_file != "" &&
+        file.exists(input_file) &&
+        tolower(tools::file_ext(input_file)) == "rdata") {
+      df_new <- df
+      load(input_file)
+      df <- rbind(df, df_new)
+    }
+    
+    output_file <- take_input("Write a name of .RData file to save dataframe to (skip for default name): ")
+    
+    # Generate timestamp if there is no predetermined name
+    if (output_file == "") {
+      output_file <- generate_filename(SUFFIX, EXTENSION)
+    }
+    else {
+      # Check for attempt to overwrite existing .RData file
+      if (file.exists(output_file)) {
+        overwrite_query <- get_yn("Careful, this file exists and will be replaced. Proceed?\n(y)es/(n)o: ")
+        if (!overwrite_query) {
+          output_file <- generate_filename(SUFFIX, EXTENSION)
+        }
+      }
+    }
+    save(df, file = output_file)
+    rm(list = ls(all.names = TRUE))
+    
   }
-  framename <- sprintf("%s%s", format(Sys.time(), "%Y-%m-%d_%H%M%S"), "df")
-  save(list = c(framename = "df"), file = fname)
-  rm(list = ls(all.names = TRUE))
 }
 
 
-prepare_paths_for_parsing <-
-  function(args, valid_extensions = c("xml")) {
-    #` Checks for the existence of a file presented in argument.
-    #` If it's a txt or list file, assumes it's a list of paths,
-    #` checks validity of each path as xml file and adds them to the list of paths.
-    #` If it's an xml file, checks for it validity and adds it to the list of paths.
-    #` If at any point it encounters invalid path, it prompts user to continue by pressing (y)es
-    #` or stops the program if person pressed (n)o.
-    #`
-    #` Function returns vector of strings representing paths to be parsed
+generate_filename <- function(suffix, extension) {
+  # create timestamp
+  now <- sprintf("%s%s%s",
+                 format(Sys.time(), "%Y-%m-%d_%H%M%S"),
+                 suffix,
+                 extension)
+}
+
+get_yn <- function(prompt) {
+  repeat {
+    answer <- take_input(prompt)
     
-    paths <- c()
-    if (file.exists(args)) {
-      extension <- tools::file_ext(args)
-      if (extension %in% valid_extensions) {
-        paths <- c(paths, args)
-      }
-      else if (extension == "txt" || extension == "list") {
-        list_ <- readLines(args)
-        for (el in list_) {
-          valid_path <- prepare_paths_for_parsing(el)
-          paths <- c(paths, valid_path)
-        }
-      }
-    } else {
-      warning <-
-        sprintf("File doesn't exist or can't be parsed: %s\n", args)
-      print(warning)
-      print(
-        sprintf(
-          "Press Ctrl-C in %i seconds, to stop the program, or files will be skipped",
-          SLEEP_TIME
-        )
-      )
-      Sys.sleep(SLEEP_TIME)
+    if (answer %in% c('y', 'yes')) {
+      return(TRUE)
     }
-    return(paths)
+    else if (answer %in% c('n', 'no')) {
+      return(FALSE)
+    }
+  }
+}
+
+resolve_invalid_path <- function(path) {
+  print(sprintf("File doesn't exist or can't be parsed: %s\n", path))
+  repeat {
+    choice <- tolower(take_input("(s)kip the file or (q)uit: "))
+    if (choice %in% c("s", "skip")) {
+      return(TRUE)
+    }
+    else if (choice %in% c("q", "quit")) {
+      stop() # ? change to return
+    }
+  }
+}
+
+prepare_paths_for_parsing <-
+  function(path, valid_extensions = c("xml")) {
+    valid_paths <- c()
+    if (!file.exists(path)) {
+      skip <- resolve_invalid_path(path)
+      if (skip) {
+        return(valid_paths)
+      }
+    }
+    extension <- tools::file_ext(path)
+    if (extension %in% valid_extensions) {
+      valid_paths <- c(valid_paths, path)
+    }
+    else if (extension %in% c("txt", "list")) {
+      list_ <- readLines(path)
+      for (el in list_) {
+        valid_path <- prepare_paths_for_parsing(el)
+        valid_paths <- c(paths, valid_path)
+      }
+    }
+    else {
+      resolve_invalid_path(path)
+    }
+    return(valid_paths)
   }
 
 xml_parse <- function(path) {
@@ -124,9 +187,7 @@ xml_parse <- function(path) {
   in_file <- read_xml(path)
   
   # Get experiment name from XML
-  experiment_name <- xml_text(xml_child(xml_child(in_file,
-                                                  search = "Image_Properties"),
-                                        search = "Image_Filename"))
+  experiment_name <- xml_text(xml_child(xml_child(in_file, search = "Image_Properties"), search = "Image_Filename"))
   
   # Get list of markers from XML
   markers <-
