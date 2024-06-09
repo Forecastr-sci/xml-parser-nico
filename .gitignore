@@ -1,0 +1,6 @@
+.Rhistory
+*.RData
+xml-parser.Rproj
+.Rproj.user
+*.xml
+*.txt
